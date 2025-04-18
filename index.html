@@ -1,0 +1,70 @@
+import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Chess } from "chess.js";
+import { Chessboard } from "react-chessboard";
+import io from "socket.io-client";
+
+const socket = io("https://your-server-url.com");
+
+export default function ChessGame() {
+  const [game, setGame] = useState(new Chess());
+  const [playerColor, setPlayerColor] = useState(null);
+  const [isSpectator, setIsSpectator] = useState(false);
+  const gameRef = useRef(game);
+
+  useEffect(() => {
+    socket.on("connect", () => {
+      socket.emit("join-game", window.location.pathname);
+    });
+
+    socket.on("init", ({ color, spectator }) => {
+      setPlayerColor(color);
+      setIsSpectator(spectator);
+    });
+
+    socket.on("move", (move) => {
+      const newGame = new Chess(gameRef.current.fen());
+      newGame.move(move);
+      gameRef.current = newGame;
+      setGame(newGame);
+    });
+  }, []);
+
+  function makeMove(move) {
+    const newGame = new Chess(game.fen());
+    const result = newGame.move(move);
+    if (result) {
+      setGame(newGame);
+      gameRef.current = newGame;
+      socket.emit("move", move);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-4">
+      <Card className="w-full max-w-md">
+        <CardContent className="flex flex-col items-center p-4">
+          <h2 className="text-xl font-bold mb-4">
+            {isSpectator ? "Spectating Game" : `Playing as ${playerColor}`}
+          </h2>
+          <Chessboard
+            position={game.fen()}
+            onPieceDrop={(source, target) =>
+              !isSpectator &&
+              makeMove({ from: source, to: target, promotion: "q" })
+            }
+            boardOrientation={playerColor || "white"}
+            arePiecesDraggable={!isSpectator && game.turn() === playerColor?.[0]}
+          />
+          <Button
+            className="mt-4"
+            onClick={() => window.location.reload()}
+          >
+            Restart
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
