@@ -19,11 +19,7 @@
       background: #f6f6f9;
     }
     #board { width: 100%; max-width: 400px; }
-    .clock {
-      font-size: 1rem;
-      font-weight: 600;
-      margin: .25rem;
-    }
+    .clock { font-size: 1rem; font-weight: 600; margin: .25rem; }
     #clocks {
       display: flex;
       justify-content: space-between;
@@ -62,11 +58,10 @@
   <script>
     (function() {
       const socket = io();
-      // extract roomId from /g/:roomId
       const roomId = location.pathname.split('/g/')[1];
       const chess = new Chess();
       let role = 'spectator';
-      let clocks = { w: 300000, b: 300000 }; // default 5min each
+      let clocks = { w: 300000, b: 300000 };
       let timer;
 
       const board = Chessboard('board', {
@@ -115,7 +110,7 @@
         if (gameOver && role !== 'spectator') rematchBtn.hidden = false;
       }
 
-      function onDragStart(source, piece) {
+      function onDragStart(src, piece) {
         if (
           role === 'spectator' ||
           chess.game_over() ||
@@ -125,24 +120,23 @@
         ) return false;
       }
 
-      function onDrop(source, target) {
-        const move = { from: source, to: target, promotion: 'q' };
-        return chess.move(move)
-          ? (socket.emit('move', { roomId, move }), undefined)
+      function onDrop(src, tgt) {
+        const m = { from: src, to: tgt, promotion: 'q' };
+        return chess.move(m)
+          ? (socket.emit('move', { roomId, move: m }), undefined)
           : 'snapback';
       }
-      function onSnapEnd() {
-        board.position(chess.fen());
-      }
+
+      function onSnapEnd() { board.position(chess.fen()); }
 
       function renderClocks() {
         wClockEl.textContent = msToTime(clocks.w);
         bClockEl.textContent = msToTime(clocks.b);
       }
       function msToTime(ms) {
-        const m = Math.floor(ms / 60000),
-              s = Math.floor((ms % 60000) / 1000);
-        return `${m}:${s.toString().padStart(2, '0')}`;
+        const m = Math.floor(ms/60000),
+              s = Math.floor((ms%60000)/1000);
+        return `${m}:${s.toString().padStart(2,'0')}`;
       }
 
       function startClock(turn) {
