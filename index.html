@@ -3,58 +3,247 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Quick Chess – Create or Join</title>
+  <title>Quick Chess SPA</title>
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/chessboard.js/1.0.0/chessboard-1.0.0.min.css"
+  />
   <style>
     body {
       margin: 0;
       font-family: system-ui, sans-serif;
+      background: #f6f6f9;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      height: 100vh;
-      background: #f6f6f9;
+      padding: 1rem;
     }
-    input, button {
+    /* Menu */
+    #menu {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 5vh;
+    }
+    #menu input, #menu button {
       font-size: 1rem;
       padding: .5rem;
       margin: .5rem;
       border: 1px solid #ccc;
       border-radius: .25rem;
     }
-    button {
+    #menu button {
       background: #3b82f6;
       color: #fff;
       border: none;
+      cursor: pointer;
+    }
+
+    /* Game */
+    #game { display: none; width: 100%; max-width: 400px; }
+    #clocks {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: .5rem;
+    }
+    .clock {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    #status {
+      text-align: center;
+      margin: .5rem 0;
+      font-size: 1.1rem;
+      font-weight: 500;
+    }
+    #rematch {
+      display: block;
+      margin: .5rem auto;
+      padding: .5rem 1rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: .5rem;
+      background: #3b82f6;
+      color: #fff;
+      cursor: pointer;
     }
   </style>
 </head>
 <body>
-  <h1>Quick Chess</h1>
-  <button id="newGame">Create New Game</button>
-  <div>
-    <input id="joinId" placeholder="Enter Game ID" />
-    <button id="joinGame">Join Game</button>
+
+  <!-- MENU -->
+  <div id="menu">
+    <h1>Quick Chess</h1>
+    <button id="newGame">Create New Game</button>
+    <div>
+      <input id="joinId" placeholder="Enter Game ID" />
+      <button id="joinGame">Join Game</button>
+    </div>
   </div>
 
+  <!-- GAME -->
+  <div id="game">
+    <div id="clocks">
+      <span id="wClock" class="clock">--:--</span>
+      <span id="bClock" class="clock">--:--</span>
+    </div>
+    <div id="board"></div>
+    <div id="status">Loading…</div>
+    <button id="rematch" hidden>Rematch</button>
+  </div>
+
+  <!-- Libraries -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/1.0.0-beta.1/chess.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+
   <script>
-    function uuidv4() {
-      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-        const r = (Math.random() * 16) | 0,
-              v = c === 'x' ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
+    (function() {
+      // utils
+      function uuidv4() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+          .replace(/[xy]/g, c => {
+            const r = (Math.random() * 16) | 0,
+                  v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          });
+      }
+      function msToTime(ms) {
+        const m = Math.floor(ms/60000),
+              s = Math.floor((ms%60000)/1000);
+        return `${m}:${s.toString().padStart(2,'0')}`;
+      }
+
+      // DOM
+      const menuEl     = document.getElementById('menu');
+      const newGameBtn = document.getElementById('newGame');
+      const joinIdIn   = document.getElementById('joinId');
+      const joinGameBtn= document.getElementById('joinGame');
+
+      const gameEl     = document.getElementById('game');
+      const wClockEl   = document.getElementById('wClock');
+      const bClockEl   = document.getElementById('bClock');
+      const statusEl   = document.getElementById('status');
+      const rematchBtn = document.getElementById('rematch');
+
+      // Socket & Chess
+      const socket = io();
+      const chess  = new Chess();
+      let role      = 'spectator';
+      let clocks    = { w: 300000, b: 300000 };
+      let timer;
+
+      // Chessboard.js setup
+      const board = Chessboard('board', {
+        position: 'start',
+        draggable: true,
+        orientation: 'white',
+        onDragStart,
+        onDrop,
+        onSnapEnd
       });
-    }
 
-    document.getElementById('newGame').onclick = () => {
-      const id = uuidv4();
-      window.location = `/g/${id}`;
-    };
+      // Handle menu actions
+      newGameBtn.onclick = () => {
+        const id = uuidv4();
+        location.hash = `/g/${id}`;
+      };
+      joinGameBtn.onclick = () => {
+        const id = joinIdIn.value.trim();
+        if (id) location.hash = `/g/${id}`;
+      };
 
-    document.getElementById('joinGame').onclick = () => {
-      const id = document.getElementById('joinId').value.trim();
-      if (id) window.location = `/g/${id}`;
-    };
+      // React to hash changes (routing)
+      window.addEventListener('hashchange', router);
+      router(); // initial
+
+      function router() {
+        const hash = location.hash.replace(/^#/, '');
+        if (hash.startsWith('/g/')) {
+          // show game
+          menuEl.style.display = 'none';
+          gameEl.style.display = 'block';
+          initGame(hash.split('/g/')[1]);
+        } else {
+          // show menu
+          gameEl.style.display = 'none';
+          menuEl.style.display = 'flex';
+        }
+      }
+
+      function initGame(roomId) {
+        // join room once
+        if (!socket.connected) socket.connect();
+        socket.emit('join', { roomId });
+
+        // socket events
+        socket.off('init').on('init', data => {
+          role   = data.role;
+          clocks = data.clocks;
+          updateBoard(data);
+          startClock(data.turn);
+        });
+        socket.off('move').on('move', data => {
+          clocks = data.clocks;
+          updateBoard(data);
+          startClock(data.turn);
+        });
+        socket.off('rematch').on('rematch', data => {
+          clocks = data.clocks;
+          updateBoard(data);
+          rematchBtn.hidden = true;
+          startClock(data.turn);
+        });
+
+        rematchBtn.onclick = () => {
+          socket.emit('rematch', { roomId });
+        };
+      }
+
+      function updateBoard({ fen, turn, gameOver, outcome }) {
+        chess.load(fen);
+        board.position(fen, false);
+        wClockEl.textContent = msToTime(clocks.w);
+        bClockEl.textContent = msToTime(clocks.b);
+        statusEl.textContent = gameOver
+          ? (outcome || 'Game over')
+          : `${turn === 'w' ? 'White' : 'Black'} to move`;
+        if (gameOver && role !== 'spectator') {
+          rematchBtn.hidden = false;
+        }
+      }
+
+      function onDragStart(src, piece) {
+        if (
+          role === 'spectator' ||
+          chess.game_over() ||
+          (chess.turn() === 'w') !== (role === 'white') ||
+          (role === 'white' && piece.startsWith('b')) ||
+          (role === 'black' && piece.startsWith('w'))
+        ) return false;
+      }
+
+      function onDrop(src, tgt) {
+        const move = { from: src, to: tgt, promotion: 'q' };
+        return chess.move(move)
+          ? (socket.emit('move', { roomId: location.hash.split('/g/')[1], move }), undefined)
+          : 'snapback';
+      }
+
+      function onSnapEnd() {
+        board.position(chess.fen());
+      }
+
+      function startClock(turn) {
+        clearInterval(timer);
+        timer = setInterval(() => {
+          clocks[turn] -= 1000;
+          if (clocks[turn] <= 0) clearInterval(timer);
+          wClockEl.textContent = msToTime(clocks.w);
+          bClockEl.textContent = msToTime(clocks.b);
+        }, 1000);
+      }
+    })();
   </script>
 </body>
 </html>
