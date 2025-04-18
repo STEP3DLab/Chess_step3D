@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quick Chess</title>
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/chessboard.js/1.0.0/chessboard-1.0.0.min.css"
+  />
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1rem;
+      background: #f6f6f9;
+    }
+    #board { width: 100%; max-width: 400px; }
+    .clock {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: .25rem;
+    }
+    #clocks {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 400px;
+    }
+    #status {
+      margin-top: .5rem;
+      font-size: 1.1rem;
+      font-weight: 500;
+      text-align: center;
+    }
+    button {
+      margin-top: .5rem;
+      padding: .5rem 1rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: .5rem;
+      background: #3b82f6;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div id="clocks">
+    <span id="wClock" class="clock">--:--</span>
+    <span id="bClock" class="clock">--:--</span>
+  </div>
+  <div id="board"></div>
+  <div id="status">Loading…</div>
+  <button id="rematch" hidden>Rematch</button>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/1.0.0-beta.1/chess.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+  <script>
+    (function() {
+      const socket = io();
+      // extract roomId from /g/:roomId
+      const roomId = location.pathname.split('/g/')[1];
+      const chess = new Chess();
+      let role = 'spectator';
+      let clocks = { w: 300000, b: 300000 }; // default 5min each
+      let timer;
+
+      const board = Chessboard('board', {
+        position: 'start',
+        draggable: true,
+        orientation: 'white',
+        onDragStart,
+        onDrop,
+        onSnapEnd
+      });
+
+      const wClockEl = document.getElementById('wClock'),
+            bClockEl = document.getElementById('bClock'),
+            statusEl = document.getElementById('status'),
+            rematchBtn = document.getElementById('rematch');
+
+      socket.emit('join', { roomId });
+
+      socket.on('init', data => {
+        role = data.role;
+        clocks = data.clocks;
+        updateBoard(data);
+        startClock(data.turn);
+      });
+
+      socket.on('move', data => {
+        clocks = data.clocks;
+        updateBoard(data);
+        startClock(data.turn);
+      });
+
+      socket.on('rematch', data => {
+        clocks = data.clocks;
+        updateBoard(data);
+        rematchBtn.hidden = true;
+        startClock(data.turn);
+      });
+
+      function updateBoard({ fen, turn, gameOver, outcome }) {
+        chess.load(fen);
+        board.position(fen, false);
+        renderClocks();
+        statusEl.textContent = gameOver
+          ? (outcome || 'Game over')
+          : `${turn === 'w' ? 'White' : 'Black'} to move`;
+        if (gameOver && role !== 'spectator') rematchBtn.hidden = false;
+      }
+
+      function onDragStart(source, piece) {
+        if (
+          role === 'spectator' ||
+          chess.game_over() ||
+          (chess.turn() === 'w') !== (role === 'white') ||
+          (role === 'white' && piece.startsWith('b')) ||
+          (role === 'black' && piece.startsWith('w'))
+        ) return false;
+      }
+
+      function onDrop(source, target) {
+        const move = { from: source, to: target, promotion: 'q' };
+        return chess.move(move)
+          ? (socket.emit('move', { roomId, move }), undefined)
+          : 'snapback';
+      }
+      function onSnapEnd() {
+        board.position(chess.fen());
+      }
+
+      function renderClocks() {
+        wClockEl.textContent = msToTime(clocks.w);
+        bClockEl.textContent = msToTime(clocks.b);
+      }
+      function msToTime(ms) {
+        const m = Math.floor(ms / 60000),
+              s = Math.floor((ms % 60000) / 1000);
+        return `${m}:${s.toString().padStart(2, '0')}`;
+      }
+
+      function startClock(turn) {
+        clearInterval(timer);
+        timer = setInterval(() => {
+          clocks[turn] -= 1000;
+          if (clocks[turn] <= 0) clearInterval(timer);
+          renderClocks();
+        }, 1000);
+      }
+
+      rematchBtn.addEventListener('click', () =>
+        socket.emit('rematch', { roomId })
+      );
+    })();
+  </script>
+</body>
+</html>
